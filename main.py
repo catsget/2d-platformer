@@ -10,10 +10,14 @@ def draw_text(surface, text, size, x, y, color=TEXT_COLOR):
     surface.blit(font.render(text, True, color), (x, y))
 
 
-def create_camera_position(player, level_width):
-    """Камера следует за игроком, но не выходит за края уровня."""
-    camera_x = player.rect.centerx - WIDTH // 2
-    return max(0, min(camera_x, level_width - WIDTH))
+def create_camera_position(player, camera_x):
+    """Плавная камера: lerp к цели (центрирование игрока) + clamp по краям уровня."""
+    target_x = max(0.0, min(player.x + PLAYER_WIDTH / 2 - WIDTH / 2, LEVEL_WIDTH - WIDTH))
+    camera_x += (target_x - camera_x) * CAMERA_SMOOTHING
+    # Не даём камере дрожать на маленьких отклонениях
+    if abs(target_x - camera_x) < 0.5:
+        camera_x = target_x
+    return max(0.0, min(camera_x, LEVEL_WIDTH - WIDTH))
 
 
 def main():
@@ -26,6 +30,7 @@ def main():
     level = Level()
     score = 0
     total_coins = len(level.coins)
+    camera_x = 0.0
     running = True
 
     while running:
@@ -51,12 +56,12 @@ def main():
             level.collect_coins(player.rect)
             score += before - len(level.coins)
 
-        camera_x = create_camera_position(player, LEVEL_WIDTH)
+        camera_x = create_camera_position(player, camera_x)
 
         # --- Рендер ---
         screen.fill(BG_COLOR)
-        level.draw(screen, camera_x)
-        player.draw(screen, camera_x)
+        level.draw(screen, int(camera_x))
+        player.draw(screen, int(camera_x))
 
         draw_text(screen, f"Монеты: {score}/{total_coins}", 24, 15, 10)
         draw_text(screen, "A/D или стрелки — бег, W/Space — прыжок, R — рестарт", 16, 15, 40)
