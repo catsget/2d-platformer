@@ -18,6 +18,7 @@ class Player:
         self.on_ground = False
         self.coyote_timer = 0    # кадры, оставшиеся для прыжка после схода с земли
         self.jump_buffer = 0     # кадры, оставшиеся в "памяти" нажатия прыжка
+        self.was_jump_held = False
 
     def update(self, platforms):
         # --- Управление: плавное ускорение ---
@@ -30,8 +31,9 @@ class Player:
             friction = PLAYER_FRICTION if self.on_ground else AIR_FRICTION
             self.vel_x *= (1.0 - friction)
 
-        # --- Прыжок с coyote time и буфером нажатия ---
-        if keys[pygame.K_SPACE] or keys[pygame.K_w] or keys[pygame.K_UP]:
+        # --- Прыжок: coyote time, буфер нажатия и переменная высота ---
+        jump_held = keys[pygame.K_SPACE] or keys[pygame.K_w] or keys[pygame.K_UP]
+        if jump_held:
             self.jump_buffer = JUMP_BUFFER_FRAMES
         if self.on_ground:
             self.coyote_timer = COYOTE_FRAMES
@@ -43,9 +45,19 @@ class Player:
             self.jump_buffer -= 1
         if self.coyote_timer > 0:
             self.coyote_timer -= 1
+        # Отпустил кнопку в полёте — прыжок обрезается (короткий тап = низкий прыжок)
+        if not jump_held and self.was_jump_held and self.vel_y < 0:
+            self.vel_y *= JUMP_CUT
+        self.was_jump_held = jump_held
 
-        # --- Гравитация ---
-        self.vel_y += GRAVITY
+        # --- Гравитация: плавный взлёт -> hang time на вершине -> резкое падение ---
+        if self.vel_y < 0:
+            if abs(self.vel_y) < APEX_THRESHOLD:
+                self.vel_y += GRAVITY_APEX
+            else:
+                self.vel_y += GRAVITY_RISE
+        else:
+            self.vel_y += GRAVITY_FALL
         if self.vel_y > MAX_FALL_SPEED:
             self.vel_y = MAX_FALL_SPEED
 
