@@ -3,7 +3,7 @@ from settings import *
 
 
 class Player:
-    """Игрок: плавный бег, прыжки, гравитация и коллизии с платформами.
+    """Игрок: плавный бег, прыжки, гравитация, коллизии и лазание по лианам.
 
     Позиция хранится во float (self.x, self.y), а self.rect синхронизируется
     с округлёнными значениями для точных коллизий.
@@ -18,10 +18,13 @@ class Player:
         self.on_ground = False
         self.coyote_timer = 0    # кадры, оставшиеся для прыжка после схода с земли
         self.jump_buffer = 0     # кадры, оставшиеся в "памяти" нажатия прыжка
-        self.was_jump_held = False
+        self.space_prev = False
+        self.jump_input_prev = None
+        self.on_vine = False     # сейчас лезет по лиане
+        self.climb_locked = False # запрет лазания до выхода из зоны лианы
 
-    def update(self, platforms):
-        # --- Управление: плавное ускорение ---
+    def update(self, platforms, vines):
+        # --- Управление бегом: плавное ускорение ---
         keys = pygame.key.get_pressed()
         move_dir = (keys[pygame.K_RIGHT] or keys[pygame.K_d]) - (keys[pygame.K_LEFT] or keys[pygame.K_a])
         if move_dir:
@@ -31,8 +34,27 @@ class Player:
             friction = PLAYER_FRICTION if self.on_ground else AIR_FRICTION
             self.vel_x *= (1.0 - friction)
 
+        space_held = keys[pygame.K_SPACE]
+        space_edge = space_held and not self.space_prev
+
+        # --- Определяем лиану ---
+        overlapping_vine = any(self.rect.colliderect(vine) for vine in vines)
+        if not overlapping_vine:
+            self.climb_locked = False
+        self.on_vine = overlapping_vine and not self.climb_locked
+
+        if self.on_vine:
+            self._update_on_vine(keys, space_edge)
+            # Запоминаем ввод прыжка для jump cut при спрыгивании с лианы
+            self.jump_input_prev = space_held or keys[pygame.K_w] or keys[pygame.K_UP]
+            self.space_prev = space_held
+            return
+
+        jump_held = space_held or keys[pygame.K_w] or keys[pygame.K_UP]
+        if self.jump_input_prev is None:
+            self.jump_input_prev = jump_held
+
         # --- Прыжок: coyote time, буфер нажатия и переменная высота ---
-        jump_held = keys[pygame.K_SPACE] or keys[pygame.K_w] or keys[pygame.K_UP]
         if jump_held:
             self.jump_buffer = JUMP_BUFFER_FRAMES
         if self.on_ground:
@@ -46,14 +68,14 @@ class Player:
         if self.coyote_timer > 0:
             self.coyote_timer -= 1
         # Отпустил кнопку в полёте — прыжок обрезается (короткий тап = низкий прыжок)
-        if not jump_held and self.was_jump_held and self.vel_y < 0:
+        if not jump_held and self.jump_input_prev and self.vel_y < 0:
             self.vel_y *= JUMP_CUT
-        self.was_jump_held = jump_held
+        self.jump_input_prev = jump_held
+        self.space_prev = space_held
 
         # --- Гравитация: непрерывная кривая без резких переходов ---
         # Возле вершины (|скорость| ~ 0) гравитация минимальна (hang time),
-        # дальше плавно (smoothstep) растёт до линейной гравитации
-        # подъёма или падения — скачка на переходе больше нет.
+        # дальше плавно (smoothstep) растёт до подъёмной или падающей.
         if self.vel_y < 0:
             base = GRAVITY_RISE
         else:
@@ -90,13 +112,35 @@ class Player:
                     self.vel_y = 0
                 self.y = float(self.rect.y)
 
-    def draw(self, surface, camera_x):
+    def _update_on_vine(self, keys, space_edge):
+        """Лазание: W/Up — вверх, S/Down — вниз, Space — спрыгнуть."""
+        self.vel_y = 0.0
+        self.on_ground = False
+        climb_up = keys[pygame.K_w] or keys[pygame.K_UP]
+        climb_down = keys[pygame.K_s] or keys[pygame.K_DOWN]
+        if climb_up:
+            self.y -= VINE_CLIMB_SPEED
+        elif climb_down:
+            self.y += VINE_CLIMB_SPEED
+
+        # Спрыгнуть с лианы (отпускаем climbing)
+        if space_edge:
+            self.vel_y = JUMP_STRENGTH * 0.85
+            self.climb_locked = True
+            self.on_vine = False
+
+        # Горизонталь: только позиция, без коллизий (вылезем из стены сами)
+        self.x += self.vel_x
+        self.rect.topleft = (round(self.x), round(self.y))
+
+    def draw(self, surface, camera_x, camera_y=0):
         x = self.rect.x - camera_x
-        pygame.draw.rect(surface, PLAYER_COLOR, (x, self.rect.y, self.rect.width, self.rect.height))
+        y = self.rect.y - camera_y
+        pygame.draw.rect(surface, PLAYER_COLOR, (x, y, self.rect.width, self.rect.height))
         # Глаза, чтобы было видно направление
         if self.vel_x >= 0:
             eye_x = x + self.rect.width - 14
         else:
             eye_x = x + 6
-        pygame.draw.circle(surface, (255, 255, 255), (eye_x + 4, self.rect.y + 14), 5)
-        pygame.draw.circle(surface, (40, 40, 40), (eye_x + 6, self.rect.y + 14), 2)
+        pygame.draw.circle(surface, (255, 255, 255), (eye_x + 4, y + 14), 5)
+        pygame.draw.circle(surface, (40, 40, 40), (eye_x + 6, y + 14), 2)
