@@ -50,14 +50,17 @@ class Player:
             self.vel_y *= JUMP_CUT
         self.was_jump_held = jump_held
 
-        # --- Гравитация: плавный взлёт -> hang time на вершине -> резкое падение ---
+        # --- Гравитация: непрерывная кривая без резких переходов ---
+        # Возле вершины (|скорость| ~ 0) гравитация минимальна (hang time),
+        # дальше плавно (smoothstep) растёт до линейной гравитации
+        # подъёма или падения — скачка на переходе больше нет.
         if self.vel_y < 0:
-            if abs(self.vel_y) < APEX_THRESHOLD:
-                self.vel_y += GRAVITY_APEX
-            else:
-                self.vel_y += GRAVITY_RISE
+            base = GRAVITY_RISE
         else:
-            self.vel_y += GRAVITY_FALL
+            base = GRAVITY_FALL
+        t = min(abs(self.vel_y) / APEX_RANGE, 1.0)
+        smoothstep = t * t * (3.0 - 2.0 * t)
+        self.vel_y += GRAVITY_APEX + (base - GRAVITY_APEX) * smoothstep
         if self.vel_y > MAX_FALL_SPEED:
             self.vel_y = MAX_FALL_SPEED
 
