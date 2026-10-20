@@ -59,6 +59,13 @@ COINS = [
     (340, 600), (690, 540), (1040, 600), (1430, 540), (1740, 600),
 ]
 
+# Факелы: (x, y_подножия) — стоят на платформах вдоль маршрута
+TORCH_SPOTS = [
+    (120, 1740), (970, 1740), (1980, 1740),        # этаж 1
+    (1650, 1240), (350, 1240),                     # этаж 2
+    (170, 660), (1540, 600), (1800, 660),          # этаж 3
+]
+
 
 class Level:
     def __init__(self):
@@ -66,6 +73,17 @@ class Level:
         self.lava = [pygame.Rect(x, y, w, h) for x, y, w, h in LAVA]
         self.vines = [pygame.Rect(x, y, VINE_WIDTH, span) for x, y, span in VINE_SPANS]
         self.coins = [(x, y) for x, y in COINS]
+        self.torches = TORCH_SPOTS
+        # Предрендер свечения факела в 4 фазах пульсации (экономим пересоздание)
+        base = GLOW_RINGS[0][0] * 2
+        self.glow_frames = []
+        for phase in range(4):
+            size = base + phase * 6
+            surf = pygame.Surface((size, size), pygame.SRCALPHA)
+            cx = size // 2
+            for r, alpha in GLOW_RINGS:
+                pygame.draw.circle(surf, (*GLOW_COLOR, alpha), (cx, cx), r + phase * 3)
+            self.glow_frames.append(surf)
 
     @property
     def collected_all(self):
@@ -125,7 +143,65 @@ class Level:
                     (tip_x - 8, tip_y), (tip_x + 8, tip_y), (tip_x, tip_y + depth)
                 ])
 
+    def _draw_parallax(self, surface, camera_x, camera_y):
+        """Дальние слои пещеры: сталактиты сверху и сталагмиты снизу,
+        движутся медленнее камеры (factor слоя)."""
+        w, h = surface.get_size()
+        for layer in PARALLAX_LAYERS:
+            factor = layer["factor"]
+            color = layer["color"]
+            offset_x = camera_x * factor
+            # Небольшой вертикальный сдвиг от центра мира
+            norm_y = (camera_y - (LEVEL_HEIGHT - HEIGHT) / 2) * factor * 0.3
+            step = PARALLAX_STEP
+            first = int(offset_x // step) - 1
+            layers_count = w // step + 3
+            for i in range(first, first + layers_count):
+                x = i * step - offset_x
+                # Детерминированная вариация высоты
+                depth = 50 + (i * 37 % 70)
+                if i % 3 == 0:
+                    depth -= 25
+                # Потолок
+                top_y = 0 - norm_y
+                pygame.draw.polygon(surface, color, [
+                    (x, top_y), (x + 110, top_y), (x + 40, top_y + depth)
+                ])
+                # Пол дальнего плана
+                bottom_y = h + norm_y
+                pygame.draw.polygon(surface, color, [
+                    (x, bottom_y), (x + 110, bottom_y), (x + 40, bottom_y - depth)
+                ])
+
+    def _draw_torch(self, surface, spot, camera_x, camera_y, ticks):
+        """Факел: рукоять + дрожащее пламя + тёплое свечение."""
+        x = spot[0] - camera_x
+        y_base = spot[1] - camera_y
+        if not (-80 < x < surface.get_width() + 80):
+            return
+        seed = spot[0] * 0.017
+        # Свечение (4 фазы пульсации + BLEND_ADD как настоящий свет)
+        phase = int((math.sin(ticks * 0.004 + seed) + 1) * 1.99)
+        glow = self.glow_frames[phase]
+        surface.blit(glow, (x - glow.get_width() // 2, y_base - 34 - glow.get_height() // 2),
+                     special_flags=pygame.BLEND_ADD)
+        # Рукоять
+        pygame.draw.rect(surface, TORCH_HANDLE, (x - 2, y_base - 26, 5, 26))
+        # Пламя (дрожит и покачивается)
+        flick = math.sin(ticks * 0.02 + seed) * 2.5
+        sway = math.sin(ticks * 0.013 + seed * 2) * 2
+        tip_y = y_base - 26 - 14 + flick
+        pygame.draw.polygon(surface, FLAME_COLOR, [
+            (x - 4, y_base - 26), (x + 4, y_base - 26),
+            (x + 3 + sway, tip_y), (x - 3 + sway, tip_y)
+        ])
+        pygame.draw.polygon(surface, FLAME_CORE, [
+            (x - 2, y_base - 26), (x + 2, y_base - 26), (x + sway, tip_y + 3)
+        ])
+
     def draw(self, surface, camera_x, camera_y, ticks):
+        # Дальний план
+        self._draw_parallax(surface, camera_x, camera_y)
         # Лианы (за платформами)
         for vine in self.vines:
             self._draw_vine(surface, vine, camera_x, camera_y)
@@ -137,6 +213,9 @@ class Level:
             pygame.draw.rect(surface, PLATFORM_EDGE, (x, y, platform.width, 4))
         # Сталактиты
         self._draw_stalactites(surface, camera_x, camera_y)
+        # Факелы
+        for spot in self.torches:
+            self._draw_torch(surface, spot, camera_x, camera_y, ticks)
         # Лава поверх
         self._draw_lava(surface, camera_x, camera_y, ticks)
         # Монеты
